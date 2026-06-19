@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Anandrathi</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="login-wrapper">
+        <!-- Animation Background -->
+        <div class="background-animation">
+            <div class="shape"></div>
+            <div class="shape"></div>
+            <div class="shape"></div>
+            <div class="shape"></div>
+        </div>
+
+        <!-- Login Form -->
+        <form class="login-form" action="/login" method="POST">
+            <h3 class="form-title">Login Here</h3>
+            
+            <!-- Flash Messages -->
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }}">
+                            {{ message }}
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            <label for="username" class="form-label">Username</label>
+            <input type="text" name="username" id="username" placeholder="Enter username" class="form-input" required>
+
+            <label for="password" class="form-label">Password</label>
+            <input type="password" name="password" id="password" placeholder="Enter password" class="form-input" required>
+
+            <button type="submit" class="submit-btn">Log In</button>
+
+            <div class="social">
+                <div class="go"><i class="fab fa-google"></i> Google</div>
+                <div class="fb"><i class="fab fa-facebook"></i> Facebook</div>
+            </div>
+        </form>
+    </div>
+
+    <!-- JavaScript -->
+    <script src="{{ url_for('static', filename='style.js') }}"></script>
+</body>
+</html>
