@@ -2,3 +2,4 @@ venv/
 venv_clean/
 __pycache__/
 *.pyc
+.DS_Store
