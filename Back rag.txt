@@ -1,0 +1,179 @@
+import pandas as pd
+from langchain_community.vectorstores import Chroma
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_groq import ChatGroq
+from langchain.prompts import PromptTemplate
+from langchain.chains import RetrievalQA
+from dotenv import load_dotenv
+import os
+
+# Load API key
+load_dotenv()
+
+
+class FinRAG:
+    def __init__(self):
+        """Initialize Groq LLM + Local Embeddings"""
+
+        # ✅ Use HuggingFace embeddings (Groq does NOT support embeddings)
+        self.embeddings = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-MiniLM-L6-v2"
+        )
+
+        # ✅ Use Groq LLM
+        self.llm = ChatGroq(
+            groq_api_key=os.getenv("GROQ_API_KEY"),
+            model_name="llama3-8b-8192",  # You can also use llama3-70b-8192
+            temperature=0
+        )
+
+        self.prompt_template = """
+        You are a friendly financial concierge helping an Indian user.
+        Answer based ONLY on the transaction data provided.
+
+        User Question: {question}
+        Relevant Transactions: {context}
+
+        Provide:
+        1. Clear answer in natural language
+        2. Actionable financial advice
+        3. Mention specific numbers from the data
+
+        Keep the tone friendly and use ₹ for currency.
+
+        Answer:
+        """
+
+    def create_embeddings(self, df):
+        """Convert each transaction into searchable text"""
+        texts = []
+        for _, row in df.iterrows():
+            text = (
+                f"Date: {row['date']}, "
+                f"Amount: ₹{row['amount']}, "
+                f"Category: {row['category']}, "
+                f"Description: {row['description']}, "
+                f"Balance: ₹{row['balance']}"
+            )
+            texts.append(text)
+
+        vectorstore = Chroma.from_texts(texts, self.embeddings)
+        return vectorstore
+
+    def analyze_spending_pattern(self, df, category_query):
+        category_df = df[
+            df['category'].str.contains(category_query, case=False, na=False)
+        ]
+        total_spent = category_df['amount'].sum()
+        avg_transaction = category_df['amount'].mean() if len(category_df) > 0 else 0
+
+        return {
+            "total_spent": total_spent,
+            "transactions": len(category_df),
+            "avg_amount": avg_transaction
+        }
+
+    def predict_overdraft(self, df, days_ahead=7):
+        recent = df.tail(30)
+        expenses = recent[recent['category'] != 'Income']
+        daily_avg = expenses['amount'].mean()
+        projected_spend = daily_avg * days_ahead
+        current_balance = df['balance'].iloc[-1]
+
+        if current_balance - projected_spend < 0:
+            return True, abs(current_balance - projected_spend)
+        return False, current_balance - projected_spend
+
+    def query(self, question, df):
+        try:
+            vectorstore = self.create_embeddings(df)
+
+            qa_chain = RetrievalQA.from_chain_type(
+                llm=self.llm,
+                chain_type="stuff",
+                retriever=vectorstore.as_retriever(search_kwargs={"k": 10}),
+                chain_type_kwargs={
+                    "prompt": PromptTemplate(
+                        template=self.prompt_template,
+                        input_variables=["question", "context"]
+                    )
+                }
+            )
+
+            response = qa_chain.run(question)
+
+            insights = []
+
+            if any(word in question.lower() for word in
+                   ['spend', 'spent', 'coffee', 'food', 'how much', 'total',
+                    'category', 'breakdown']):
+                for cat in df['category'].unique():
+                    if cat == 'Income':
+                        continue
+                    analysis = self.analyze_spending_pattern(df, cat)
+                    if analysis['total_spent'] > 0:
+                        insights.append(
+                            f"💸 **{cat}**: ₹{analysis['total_spent']:.0f} "
+                            f"({analysis['transactions']} transactions, "
+                            f"avg ₹{analysis['avg_amount']:.0f})"
+                        )
+
+            will_overdraft, amount = self.predict_overdraft(df)
+            if will_overdraft:
+                insights.append(
+                    f"🚨 **OVERDRAFT ALERT**: At your current spending rate, "
+                    f"you'll be short by ₹{amount:.0f} within a week! "
+                    f"Consider reducing discretionary spending."
+                )
+            else:
+                insights.append(
+                    f"✅ **Balance Check**: You have ₹{amount:.0f} projected "
+                    f"surplus for the next 7 days."
+                )
+
+            if insights:
+                full_response = (
+                    f"{response}\n\n"
+                    f"---\n"
+                    f"**📊 Quick Insights:**\n\n"
+                    + "\n\n".join(insights)
+                )
+            else:
+                full_response = response
+
+            chart_config = self.generate_chart_config(question, df)
+
+            return full_response, chart_config
+
+        except Exception as e:
+            return f"Sorry, I encountered an error: {str(e)}", None
+
+    def generate_chart_config(self, question, df):
+        question_lower = question.lower()
+
+        if any(word in question_lower for word in
+               ['spend', 'category', 'breakdown', 'pie', 'chart',
+                'how much', 'where']):
+            expenses = df[df['category'] != 'Income']
+            category_spend = (
+                expenses.groupby('category')['amount']
+                .sum()
+                .reset_index()
+            )
+            return {
+                "type": "pie",
+                "values": category_spend['amount'].tolist(),
+                "names": category_spend['category'].tolist(),
+                "title": "💰 Your Spending Breakdown by Category"
+            }
+
+        if any(word in question_lower for word in
+               ['trend', 'over time', 'daily', 'monthly', 'balance']):
+            return {
+                "type": "line",
+                "x": df['date'].tolist(),
+                "y": df['balance'].tolist(),
+                "title": "📈 Balance Over Time"
+            }
+
+        return None
